@@ -7,9 +7,14 @@ from tqdm import tqdm
 import numpy as np
 
 import torch
-from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.loader import DataLoader
 import torch_geometric
+
+try:
+    from packaging.version import Version as LooseVersion
+except ImportError:
+    pass  # The import will be used by torch.utils.tensorboard
+from torch.utils.tensorboard import SummaryWriter
 
 from generative_graphik.args.parser import parse_training_args
 from generative_graphik.utils.torch_utils import set_seed_torch
@@ -23,7 +28,13 @@ def load_datasets(path: str, device, val_pcnt=0):
         try:
             # data = pickle.load(f)
             data = torch.load(f)
-            data._data = data._data.to(device)
+            # Handle different PyTorch Geometric dataset structures
+            if hasattr(data, "_data"):
+                data._data = data._data.to(device)
+            elif hasattr(data, "data"):
+                data.data = data.data.to(device)
+            elif hasattr(data, "to"):
+                data = data.to(device)
             val_size = int((val_pcnt/100)*len(data))
             train_size = len(data) - val_size
             val_dataset, train_dataset = torch.utils.data.random_split(data, [val_size, train_size])

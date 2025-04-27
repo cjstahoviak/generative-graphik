@@ -29,8 +29,8 @@ then
     python -u ${SRC_PATH}/generative_graphik/utils/dataset_generation.py \
         --id "${DATASET_NAME}" \
         --robots kuka \
-        --num_examples 512000 \
-        --max_examples_per_file 512000 \
+        --num_examples 5120 \
+        --max_examples_per_file 5120 \
         --goal_type pose \
         --goal_type pose \
         --randomize False
@@ -44,7 +44,7 @@ python -u ${SRC_PATH}/generative_graphik/train.py \
     --id "${NAME}_model" \
     --norm_layer LayerNorm \
     --debug False \
-    --device cuda:1 \
+    --device cpu \
     --n_worker 0 \
     --n_beta_scaling_epoch 1 \
     --lr 3e-4 \
