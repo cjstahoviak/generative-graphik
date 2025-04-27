@@ -1,4 +1,4 @@
-name: generative-graphik-py38
+name: generative-graphik-py38-calvin
 channels:
   - pytorch
   - conda-forge
