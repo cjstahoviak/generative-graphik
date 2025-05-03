@@ -71,6 +71,7 @@ def parse_data_generation_args():
     parser.add_argument("--obstacles", type=str2bool, default=False, help="Use obstacles")
     parser.add_argument("--semantic", type=str2bool, default=False, help="Use semantic tags for nodes.")
     parser.add_argument("--load_from_disk", type=str2bool, default=False, help="Save data as separate files.")
+    parser.add_argument("--non_coplanar", type=str2bool, default=False, help="Generate a non-coplanar robot.")
 
     # Problem settings
     parser.add_argument("--num_examples", type=int, default=10, help="Total number of problems in the dataset")

@@ -28,12 +28,13 @@ then
     echo "Dataset ${DATASET_NAME} not found, creating it."
     python -u ${SRC_PATH}/generative_graphik/utils/dataset_generation.py \
         --id "${DATASET_NAME}" \
-        --robots kuka \
-        --num_examples 5120 \
-        --max_examples_per_file 5120 \
+        --robots revolute_chain \
+        --num_examples 512 \
+        --max_examples_per_file 512 \
         --goal_type pose \
         --goal_type pose \
-        --randomize False
+        --randomize False \
+        --non_coplanar True
 else
     echo "Dataset ${DATASET_NAME} found!"
 fi
@@ -43,8 +44,8 @@ then
 python -u ${SRC_PATH}/generative_graphik/train.py \
     --id "${NAME}_model" \
     --norm_layer LayerNorm \
-    --debug False \
-    --device cpu \
+    --debug True \
+    --device cuda:0 \
     --n_worker 0 \
     --n_beta_scaling_epoch 1 \
     --lr 3e-4 \
@@ -65,7 +66,7 @@ python -u ${SRC_PATH}/generative_graphik/train.py \
     --num_likelihood_mixture_components 1\
     --num_anchor_nodes 4 \
     --train_prior True \
-    --n_epoch 1 \
+    --n_epoch 10 \
     --n_scheduler_epoch 60\
     --dim_goal 6 \
     --storage_base_path "${SRC_PATH}/saved_models" \

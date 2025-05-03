@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 import graphik
 from graphik.robots import RobotRevolute
 from graphik.graphs import ProblemGraphRevolute
-from graphik.graphs.graph_revolute import random_revolute_robot_graph
+from graphik.graphs.graph_revolute import random_revolute_robot_graph, random_revolute_robot_graph_non_coplanar
 import generative_graphik
 from generative_graphik.args.parser import parse_data_generation_args
 from generative_graphik.utils.torch_utils import (
@@ -185,12 +185,22 @@ def generate_specific_robot_data(robots, num_examples, params):
             raise NotImplementedError
 
         urdf_robot = RobotURDF(fname)
-        robot = urdf_robot.make_Revolute3d(
-            q_lim_l,
-            q_lim_u,
-            randomized_links=params["randomize"],
-            randomize_percentage=params["randomize_percentage"],
-        )  # make the Revolute class from a URDF
+
+        if params.get("non_coplanar", False) : # make the Revolute class from a URDF
+            robot = urdf_robot.make_Revolute3d(
+                q_lim_l,
+                q_lim_u,
+                randomized_links=params["randomize"],
+                randomize_percentage=params["randomize_percentage"],
+            )  
+        else :
+            robot = urdf_robot.make_Revolute3d_non_coplanar(
+                q_lim_l,
+                q_lim_u,
+                randomized_links=params["randomize"],
+                randomize_percentage=params["randomize_percentage"],
+            )   
+
         graph = ProblemGraphRevolute(robot)
         struct_data = generate_struct_data(graph)
 
@@ -291,7 +301,10 @@ def generate_randomized_robot_data(robot_type, dofs, num_examples, params):
 
     for dof in dofs:
         with mp.Pool() as p:
-            graphs = p.map(random_revolute_robot_graph, [dof] * examples_per_dof)
+            if params.get("non_coplanar", False):
+                graphs = p.map(random_revolute_robot_graph, [dof] * examples_per_dof)
+            else:
+                graphs = p.map(random_revolute_robot_graph_non_coplanar, [dof] * examples_per_dof)
         for idx in tqdm(range(examples_per_dof), leave=False):
             struct_data = generate_struct_data(graphs[idx])
             for field in struct_data.__dataclass_fields__:
@@ -410,6 +423,7 @@ def main(args):
             "goal_type": args.goal_type,
             "randomize": args.randomize,
             "randomize_percentage": args.randomize_percentage,
+            "non_coplanar": args.non_coplanar,
         }
 
         data, slices = generate_dataset(
@@ -435,6 +449,7 @@ def main(args):
         "goal_type": args.goal_type,
         "randomize": args.randomize,
         "randomize_percentage": args.randomize_percentage,
+        "non_coplanar": args.non_coplanar,
     }
     data, slices = generate_dataset(
         dataset_params,
