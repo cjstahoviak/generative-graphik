@@ -1,0 +1,4 @@
+[submodule "GraphIK"]
+    path = GraphIK
+    url  = git@github.com:gvurbaitis/GraphIK.git
+    branch = generative_ik
