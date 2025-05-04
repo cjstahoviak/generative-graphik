@@ -45,7 +45,7 @@ python -u ${SRC_PATH}/generative_graphik/train.py \
     --id "${NAME}_model" \
     --norm_layer LayerNorm \
     --debug True \
-    --device cuda:0 \
+    --device cpu \
     --n_worker 0 \
     --n_beta_scaling_epoch 1 \
     --lr 3e-4 \
@@ -56,7 +56,7 @@ python -u ${SRC_PATH}/generative_graphik/train.py \
     --mlp_hidden_size 128 \
     --dim_latent_node_out 16 \
     --dim_latent 64 \
-    --gnn_type "egnn" \
+    --gnn_type "egnnatt" \
     --num_gnn_layers 5 \
     --num_node_features_out 3 \
     --num_coordinates_in 3 \

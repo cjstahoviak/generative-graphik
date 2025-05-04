@@ -4,6 +4,7 @@ import time
 import torch
 import torch.nn as nn
 
+from generative_graphik.networks.eqgraphatt import EqGraphAtt
 from generative_graphik.networks.eqgraph import EqGraph
 from generative_graphik.networks.gatgraph import GATGraph
 from generative_graphik.networks.gcngraph import GCNGraph
@@ -37,6 +38,8 @@ class Model(nn.Module):
 
         if args.gnn_type == "egnn":
             gnn = EqGraph
+        elif args.gnn_type == "egnnatt":
+            gnn = EqGraphAtt
         elif args.gnn_type == "gat":
             gnn = GATGraph
         elif args.gnn_type == "gcn":
@@ -131,55 +134,35 @@ class Model(nn.Module):
     def preprocess(self, data):
         data["edge_index_full"] = data.edge_index_full.type(torch.long)
         data["edge_index_partial"] = data.edge_index_full[:, data.partial_mask].type(torch.long)
-        # data["edge_attr_partial"] = data.edge_attr[data.partial_mask]
         data["edge_attr_partial"] = data.partial_mask.unsqueeze(-1) * data.edge_attr
         data["T_ee"] = torch_log_from_T(data.T_ee)
-        #XXX: Hacky workaround since LieGroups doesn't handle batch_size=1
+
+        # Workaround for LieGroups batching
         if data["T_ee"].dim() == 1:
             data["T_ee"] = data["T_ee"].unsqueeze(0)
-        dim = data.T_ee.shape[-1]//3 + 1
-        data["goal_data_repeated_per_node"] = torch.repeat_interleave(data.T_ee, (dim-1)*data.num_joints + self.num_anchor_nodes, dim=0)
+
+        dim = data.T_ee.shape[-1] // 3 + 1
+        goal_repeated = torch.repeat_interleave(
+            data.T_ee,
+            (dim - 1) * data.num_joints + self.num_anchor_nodes,
+            dim=0
+        )
+        data["goal_data_repeated_per_node"] = goal_repeated
+
+        ## Always build node features as type + goal encoding
+        data["h"] = torch.cat([data["type"], data["goal_data_repeated_per_node"]], dim=-1)
+
         return data
-
-    def loss(self, res, epoch, batch_size, goal_pos, partial_goal_mask):
-        mu_x_sample = res["mu_x_sample"]
-        partial_non_goal_mask = torch.ones_like(partial_goal_mask) - partial_goal_mask
-        beta_kl = min(((epoch + 1) / self.n_beta_scaling_epoch), 1.0)
-        stats = {}
-
-        # Point loss
-        loss_anchor = torch.sum((partial_goal_mask[:,None]*(mu_x_sample - goal_pos))**2) / (batch_size)
-        loss_non_anchor = torch.sum(partial_non_goal_mask[:,None]*((mu_x_sample - goal_pos)**2)) / (batch_size)
-        loss_rec_pos_opt = loss_anchor + self.rec_gain * loss_non_anchor
-        loss_rec_pos = torch.sum((mu_x_sample - goal_pos)**2) / (batch_size)
-        stats["rec_pos_l"] = loss_rec_pos.item()
-
-        # Distance loss
-        # src, dst = res["edge_index_partial"]
-        # # src, dst = res["edge_index_full"]    
-        # dist_samples = ((mu_x_sample[src] - mu_x_sample[dst])**2).sum(dim=-1).sqrt()
-        # dist = ((goal_pos[src] - goal_pos[dst])**2).sum(dim=-1).sqrt()
-        # loss_rec_dist = torch.sum((dist_samples - dist)**2) / (batch_size)
-        # stats["rec_dist_l"] = loss_rec_dist.item()
-
-        qz_xc = res["qz_xc"]
-        pz_c = res["pz_c"]
-        loss_kl = torch.sum(kl_divergence(qz_xc, pz_c)) / (batch_size)
-        stats["kl_l"] = loss_kl.item()
-        
-        # Point loss
-        loss = loss_rec_pos + loss_kl
-        loss_opt = loss_rec_pos_opt + beta_kl * loss_kl# + loss_sc
-
-        # Distance loss
-        # loss = loss_rec_dist + loss_kl
-        # loss_opt = self.rec_gain * loss_rec_dist + beta_kl * loss_kl
-
-        stats["total_l"] = loss.item()
-        return loss_opt, stats
 
     def forward(self, x, h, edge_attr, edge_attr_partial, edge_index, partial_goal_mask):
         # Goal T_g encoder, all edge attributes (distances)
+        # Sanity check for edge_attr shape and distance
+        if edge_attr.shape[-1] != 4:
+            raise ValueError(f"Expected edge_attr to have 4 features (dist + 3D vec), but got shape {edge_attr.shape}")
+
+        if not torch.all(edge_attr[:, 0] >= 0):
+            print("⚠️ Warning: Some edge distances (edge_attr[:, 0]) are negative or NaN")
+        
         z_goal = self.goal_config_encoder(
             x=x,
             h=h,
@@ -256,6 +239,11 @@ class Model(nn.Module):
         }
 
     def forward_eval(self, x, h, edge_attr, edge_attr_partial, edge_index, partial_goal_mask, nodes_per_single_graph, num_samples, batch_size):
+        # Sanity check
+        if edge_attr.shape[-1] != 4:
+            raise ValueError(f"Expected edge_attr to have 4 features (dist + 3D vec), but got shape {edge_attr.shape}")
+        if not torch.all(edge_attr[:, 0] >= 0):
+            print("⚠️ Warning: Some edge distances (edge_attr[:, 0]) are negative or NaN")
         for ii in range(self.max_num_iterations):
             with torch.no_grad():
                 # unknown distances and positions transformed to 0
@@ -328,3 +316,39 @@ class Model(nn.Module):
 
         mu_x_sample = mu_x_sample.reshape(num_samples, batch_size * nodes_per_single_graph, -1)
         return mu_x_sample
+    def loss(self, res, epoch, batch_size, goal_pos, partial_goal_mask):
+        mu_x_sample = res["mu_x_sample"]
+        partial_non_goal_mask = torch.ones_like(partial_goal_mask) - partial_goal_mask
+        beta_kl = min(((epoch + 1) / self.n_beta_scaling_epoch), 1.0)
+        stats = {}
+
+        # Point loss
+        loss_anchor = torch.sum((partial_goal_mask[:,None]*(mu_x_sample - goal_pos))**2) / (batch_size)
+        loss_non_anchor = torch.sum(partial_non_goal_mask[:,None]*((mu_x_sample - goal_pos)**2)) / (batch_size)
+        loss_rec_pos_opt = loss_anchor + self.rec_gain * loss_non_anchor
+        loss_rec_pos = torch.sum((mu_x_sample - goal_pos)**2) / (batch_size)
+        stats["rec_pos_l"] = loss_rec_pos.item()
+
+        # Distance loss
+        # src, dst = res["edge_index_partial"]
+        # # src, dst = res["edge_index_full"]    
+        # dist_samples = ((mu_x_sample[src] - mu_x_sample[dst])**2).sum(dim=-1).sqrt()
+        # dist = ((goal_pos[src] - goal_pos[dst])**2).sum(dim=-1).sqrt()
+        # loss_rec_dist = torch.sum((dist_samples - dist)**2) / (batch_size)
+        # stats["rec_dist_l"] = loss_rec_dist.item()
+
+        qz_xc = res["qz_xc"]
+        pz_c = res["pz_c"]
+        loss_kl = torch.sum(kl_divergence(qz_xc, pz_c)) / (batch_size)
+        stats["kl_l"] = loss_kl.item()
+        
+        # Point loss
+        loss = loss_rec_pos + loss_kl
+        loss_opt = loss_rec_pos_opt + beta_kl * loss_kl# + loss_sc
+
+        # Distance loss
+        # loss = loss_rec_dist + loss_kl
+        # loss_opt = self.rec_gain * loss_rec_dist + beta_kl * loss_kl
+
+        stats["total_l"] = loss.item()
+        return loss_opt, stats

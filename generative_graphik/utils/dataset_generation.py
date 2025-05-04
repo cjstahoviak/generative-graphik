@@ -4,6 +4,12 @@ import os
 from tqdm import tqdm
 from dataclasses import dataclass
 
+from typing import List, Union
+import numpy as np
+import os
+from tqdm import tqdm
+from dataclasses import dataclass
+
 import torch
 from torch_geometric.data import InMemoryDataset, Data
 import torch.multiprocessing as mp
@@ -55,6 +61,9 @@ class StructData:
     edge_index_full: Union[List[torch.Tensor], torch.Tensor]
     T0: Union[List[torch.Tensor], torch.Tensor]
 
+def compute_directional_edge_vectors(pos, edge_index):
+    src, dst = edge_index
+    return pos[dst] - pos[src]  # shape [E, 3]
 
 def generate_data_point(graph):
     struct_data = generate_struct_data(graph)
@@ -71,11 +80,22 @@ def generate_data_point(graph):
     distances = torch.linalg.norm(
         P[edge_index_full[0], :] - P[edge_index_full[1], :], dim=-1
     )
+    direction_vectors = compute_directional_edge_vectors(P, edge_index_full)
+    edge_attr = torch.cat([distances.unsqueeze(1), direction_vectors], dim=1)
+    assert edge_attr.shape[1] == 4, f"Expected edge_attr to have 4 columns (dist + vec3), got {edge_attr.shape}"
+
+    if not torch.all(edge_attr[:, 0] >= 0):
+        print("⚠️ Warning: edge_attr[:, 0] contains negative distances")
+
+    if not torch.all(torch.isfinite(edge_attr)):
+        raise ValueError("Found NaNs or infs in edge_attr")
+    if not torch.all(torch.norm(edge_attr[:, 1:], dim=1) > 0):
+        print("⚠️ Some directional vectors may be zero")
 
     return Data(
         type=struct_data.type,
         pos=P,
-        edge_attr=distances.unsqueeze(1),
+        edge_attr=edge_attr,
         T_ee=T_ee,
         num_joints=num_joints.type(torch.int32),
         partial_mask=struct_data.partial_mask,
@@ -336,9 +356,12 @@ def generate_randomized_robot_data(robot_type, dofs, num_examples, params):
         .expand(2, -1)
     )
     edge_index_full_offset = edge_index_full + offset_full
+
     distances = torch.linalg.norm(
         P[edge_index_full_offset[0], :] - P[edge_index_full_offset[1], :], dim=-1
     )
+    direction_vectors = P[edge_index_full_offset[1]] - P[edge_index_full_offset[0]]
+    edge_attr = torch.cat([distances.unsqueeze(1), direction_vectors], dim=1)
 
     node_slice = torch.cat([torch.tensor([0]), (num_nodes).cumsum(dim=-1)])
     joint_slice = torch.cat([torch.tensor([0]), (num_joints).cumsum(dim=-1)])
@@ -362,7 +385,7 @@ def generate_randomized_robot_data(robot_type, dofs, num_examples, params):
     data = Data(
         type=types,
         pos=P,
-        edge_attr=distances.unsqueeze(1),
+        edge_attr=edge_attr,
         T_ee=T_ee,
         num_joints=num_joints.type(torch.int32),
         partial_mask=masks,
