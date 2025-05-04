@@ -102,7 +102,7 @@ class EGNNAttLayer(MessagePassing):
         # Attention uses directional vector directly
         attn_input = torch.cat([h_i, h_j, edge_attr], dim=-1)
         scores = self.attn_mlp(attn_input)
-        attn_weights = softmax(scores, index=index)  # shape [E, 1]
+        attn_weights = custom_softmax(scores, index=index)  # shape [E, 1]
 
         # Use squared norm of direction for phi_e
         dist_sq = torch.sum(d_ij ** 2, dim=-1, keepdim=True)
@@ -122,3 +122,31 @@ class EGNNAttLayer(MessagePassing):
         h_l1 = self.phi_h(torch.cat([h, m_h], dim=-1))
         x_l1 = x + (m_x / c)
         return x_l1, h_l1
+
+def custom_softmax(src, index, dim=0):
+    """
+    Custom implementation of scatter softmax to replace torch_geometric.utils.softmax
+    
+    Args:
+        src: Source tensor of shape [E, *] where E is the number of edges
+        index: Index tensor of shape [E] that maps each edge to its target node
+        dim: Dimension along which to perform softmax, default is 0
+        
+    Returns:
+        Softmax normalized tensor of shape [E, *]
+    """
+    from torch_scatter import scatter_max, scatter_add
+    
+    # Get max value per target node for numerical stability
+    max_value = scatter_max(src, index, dim=dim)[0]
+    max_value = max_value[index]  # Broadcast max values back to edges
+    
+    # Subtract max and compute exponentials
+    exp_scores = torch.exp(src - max_value)
+    
+    # Sum exponentials per target node
+    sum_exp = scatter_add(exp_scores, index, dim=dim)
+    sum_exp = sum_exp[index]  # Broadcast sums back to edges
+    
+    # Compute softmax
+    return exp_scores / (sum_exp + 1e-12)  # Add small epsilon for numerical stability
