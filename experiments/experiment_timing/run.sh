@@ -17,4 +17,4 @@ fi
 python3 experiment_timing.py \
     --id "${NAME}_experiment" \
     --model_path "${MODEL_PATH}/" \
-    --device cuda:1 \
+    --device cuda:0 \

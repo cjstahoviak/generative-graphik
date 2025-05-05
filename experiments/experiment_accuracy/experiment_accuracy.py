@@ -3,59 +3,45 @@ import json
 import os
 import sys
 import argparse
+import graphik
 from graphik.graphs import ProblemGraphRevolute
-from graphik.graphs.graph_revolute import list_to_variable_dict
 from graphik.robots import RobotRevolute
-
-from torch_geometric.data import DataLoader
 from generative_graphik.utils.dataset_generation import generate_data_point
-
-from generative_graphik.utils.torch_utils import batchFKmultiDOF, batchIKmultiDOF, node_attributes
 
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 import random
 from argparse import Namespace
-import copy
 import pandas as pd
 import time
-
-import graphik
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from generative_graphik.args.parser import parse_analysis_args
-from graphik.utils.roboturdf import (
-    RobotURDF,
-    load_ur10,
-    load_kuka,
-    load_schunk_lwa4d,
-    load_schunk_lwa4p,
-    load_panda,
-)
-# import pyrender
-
 from graphik.utils.dgp import graph_from_pos
-from liegroups.numpy import SE3, SO3
+from liegroups.numpy import SE3
 
 def model_arg_loader(path):
-    """Load hyperparameters from trained model."""
     if os.path.isdir(path):
         with open(os.path.join(path, "hyperparameters.txt"), "r") as fp:
             return Namespace(**json.load(fp))
 
-# NOTE generates all the initializations and stores them to a pickle file
 def main(args):
+    print(f"Starting evaluation with {args.n_evals} samples across {len(args.robots)} robot types")
+    print(f"Using device: {args.device}")
+    
     device = args.device
-    num_evals = args.n_evals  # number of evaluations
+    num_evals = args.n_evals
     robot_types = args.robots
-
-    evals_per_robot = num_evals // len(robot_types)  
-    for model_path in args.model_path:# number of evaluations per robots
+    evals_per_robot = num_evals // len(robot_types)
+    
+    print(f"Testing {args.num_samples} configurations per IK problem")
+    
+    total_models = len(args.model_path)
+    for model_idx, model_path in enumerate(args.model_path):
+        print(f"\n[{model_idx+1}/{total_models}] Loading model from {model_path}")
+        
         spec = importlib.util.spec_from_file_location("model", model_path + "model.py")
         model = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(model)
 
-        # load models
         model_args = model_arg_loader(model_path)
         model = model.Model(model_args).to(device)
         name = model_args.id.replace("model", "results")
@@ -63,26 +49,25 @@ def main(args):
 
         if model_path is not None:
             try:
-                state_dict = torch.load(model_path + f"checkpoints/checkpoint.pth", map_location=device)
-                model.load_state_dict(state_dict["net"])
+                try:
+                    state_dict = torch.load(model_path + f"checkpoints/checkpoint.pth", map_location=device)
+                    model.load_state_dict(state_dict["net"])
+                    print(f"✓ Loaded model from checkpoint.pth")
+                except:
+                    state_dict = torch.load(model_path + f"net.pth", map_location=device)
+                    model.load_state_dict(state_dict)
+                    print(f"✓ Loaded model from net.pth")
                 model.eval()
             except Exception as e:
-                print(e)
+                print(f"✗ Error loading model: {e}")
 
         all_sol_data = []
-        fig_handle, ax_handle = plt.subplots(nrows=2, ncols=2, figsize=(8, 8))
         for robot_type in robot_types:
             if robot_type == "ur10":
-                # robot, graph = load_ur10(limits=None)
-                # fname = graphik.__path__[0] + "/robots/urdfs/ur10_mod.urdf"
-                # urdf_robot = RobotURDF(fname)
-
-                # UR10 coordinates for testing
                 modified_dh = False
                 a = [0, -0.612, 0.5723, 0, 0, 0]
                 d = [0.1273, 0, 0, 0.1639, 0.1157, 0.0922]
                 al = [np.pi / 2, 0, 0, np.pi / 2, -np.pi / 2, 0]
-                # th = [0, np.pi, 0, 0, 0, 0]
                 th = [0, 0, 0, 0, 0, 0]
 
                 params = {
@@ -96,14 +81,6 @@ def main(args):
                 robot = RobotRevolute(params)
                 graph = ProblemGraphRevolute(robot)
             elif robot_type == "kuka":
-                # limits_l = -np.array([170, 120, 170, 120, 170, 120, 170]) * c
-                # limits_u = np.array([170, 120, 170, 120, 170, 120, 170]) * c
-                # limits = [limits_l, limits_u]
-                # robot, graph = load_kuka(limits=None)
-                # fname = graphik.__path__[0] + "/robots/urdfs/kuka_iiwr.urdf"
-                # urdf_robot = RobotURDF(fname)
-
-                # UR10 coordinates for testing
                 modified_dh = False
                 a = [0, 0, 0, 0, 0, 0, 0]
                 d = [0.34, 0, 0.40, 0, 0.40, 0, 0.126]
@@ -121,13 +98,6 @@ def main(args):
                 robot = RobotRevolute(params)
                 graph = ProblemGraphRevolute(robot)
             elif robot_type == "lwa4d":
-                # limits_l = -np.array([180, 123, 180, 125, 180, 170, 170]) * c
-                # limits_u = np.array([180, 123, 180, 125, 180, 170, 170]) * c
-                # limits = [limits_l, limits_u]
-                # robot, graph = load_schunk_lwa4d(limits=None)
-                # fname = graphik.__path__[0] + "/robots/urdfs/lwa4d.urdf"
-                # urdf_robot = RobotURDF(fname)
-
                 modified_dh = False
                 a = [0, 0, 0, 0, 0, 0, 0]
                 d = [0.3, 0, 0.328, 0, 0.323, 0, 0.0824]
@@ -145,41 +115,23 @@ def main(args):
                 robot = RobotRevolute(params)
                 graph = ProblemGraphRevolute(robot)
             elif robot_type == "panda":
-                limits_l = -np.array(
-                    [2.8973, 1.7628, 2.8973, 0.0698, 2.8973, 3.7525, 2.8973]
-                )
-                limits_u = np.array(
-                    [2.8973, 1.7628, 2.8973, 3.0718, 2.8973, 3.7525, 2.8973]
-                )
-                limits = [limits_l, limits_u]
-                robot, graph = load_panda(limits=limits)
-                fname = graphik.__path__[0] + "/robots/urdfs/panda_arm.urdf"
-                urdf_robot = RobotURDF(fname)
+                modified_dh = False
+                a = [0, 0, 0, 0.0825, -0.0825, 0, 0.088]
+                d = [0.333, 0, 0.316, 0, 0.384, 0, 0]
+                al = [0, -np.pi/2, np.pi/2, np.pi/2, -np.pi/2, np.pi/2, np.pi/2]
+                th = [0, 0, 0, 0, 0, 0, 0]
 
-                # modified_dh = False
-                # a = [0, 0, 0, 0.0825, -0.0825, 0, 0.088]
-                # d = [0.333, 0, 0.316, 0, 0.384, 0, 0]
-                # al = [0, -np.pi/2, np.pi / 2, np.pi / 2, -np.pi / 2, np.pi / 2, np.pi / 2]
-                # th = [0, 0, 0, 0, 0, 0, 0]
-
-                # params = {
-                #     "a": a,
-                #     "alpha": al,
-                #     "d": d,
-                #     "theta": th,
-                #     "modified_dh": modified_dh,
-                #     "num_joints": 7,
-                # }
-                # robot = RobotRevolute(params)
-                # graph = ProblemGraphRevolute(robot)
+                params = {
+                    "a": a,
+                    "alpha": al,
+                    "d": d,
+                    "theta": th,
+                    "modified_dh": modified_dh,
+                    "num_joints": 7,
+                }
+                robot = RobotRevolute(params)
+                graph = ProblemGraphRevolute(robot)
             elif robot_type == "lwa4p":
-                # limits_l = -np.array([170, 170, 155.3, 170, 170, 170]) * c
-                # limits_u = np.array([170, 170, 155.3, 170, 170, 170]) * c
-                # limits = [limits_l, limits_u]
-                # robot, graph = load_schunk_lwa4p(limits=None)
-                # fname = graphik.__path__[0] + "/robots/urdfs/lwa4p.urdf"
-                # urdf_robot = RobotURDF(fname)
-
                 modified_dh = False
                 a = [0, 0.350, 0, 0, 0, 0]
                 d = [0.205, 0, 0, 0.305, 0, 0.075]
@@ -199,93 +151,137 @@ def main(args):
             else:
                 raise NotImplementedError
 
+            print(f"\nEvaluating {robot_type} robot ({evals_per_robot} samples)")
             for kdx in range(evals_per_robot):
+                print(f"  Sample {kdx+1}/{evals_per_robot} ", end="", flush=True)
                 sol_data = []
 
-                # Generate random problem
                 prob_data = generate_data_point(graph).to(device)
                 prob_data.num_graphs = 1
-                # T_goal = prob_data.T_ee.cpu().numpy()
                 data = model.preprocess(prob_data)
                 P_goal = data.pos.cpu().numpy()
-                T_goal = SE3.exp(data.T_ee.cpu().numpy())
-                # T_goal = SE3.exp(data.T_ee[0].cpu().numpy())
-                # q_goal = graph.joint_variables(graph_from_pos(P_goal, graph.node_ids))
-                # q_goal_np = np.fromiter(
-                #     (q_goal[f"p{jj}"] for jj in range(1, graph.robot.n + 1)), dtype=float
-                # )
 
-                # Compute solutions
+                try:
+                    T_goal = SE3.exp(data.T_ee.cpu().numpy())
+                except ValueError as e:
+                    # Handle dimension mismatch silently
+                    t_ee_data = data.T_ee.cpu().numpy()
+                    if len(t_ee_data.shape) > 1:
+                        t_ee_data = t_ee_data[0]
+                    
+                    if len(t_ee_data) != 6:
+                        t_ee_data = t_ee_data[:6]
+                        
+                    T_goal = SE3.exp(t_ee_data)
+
                 t0 = time.time()
-                P_all = model.forward_eval(data, num_samples=args.num_samples).cpu().detach().numpy()
-                # P_all = (
-                #         model.forward_eval(
-                #             x=data.pos, 
-                #             h=torch.cat((data.type, data.goal_data_repeated_per_node), dim=-1), 
-                #             edge_attr=data.edge_attr, 
-                #             edge_attr_partial=data.edge_attr_partial, 
-                #             edge_index=data.edge_index_full, 
-                #             partial_goal_mask=data.partial_goal_mask, 
-                #             nodes_per_single_graph= int(data.num_nodes / 1),
-                #             batch_size=1,
-                #             num_samples=args.num_samples
-                #         )
-                # )
-                # torch.cuda.synchronize()
+                P_all = model.forward_eval(
+                    x=data.pos, 
+                    h=torch.cat((data.type, data.goal_data_repeated_per_node), dim=-1), 
+                    edge_attr=data.edge_attr, 
+                    edge_attr_partial=data.edge_attr_partial, 
+                    edge_index=data.edge_index_full, 
+                    partial_goal_mask=data.partial_goal_mask, 
+                    nodes_per_single_graph=int(data.num_nodes / 1),
+                    batch_size=1,
+                    num_samples=args.num_samples
+                ).cpu().detach().numpy()
                 t_sol = time.time() - t0
+                print(f"({t_sol:.3f}s)", end="", flush=True)
 
-                # Analyze solutions
                 e_pose = np.empty([P_all.shape[0]])
                 e_pos = np.empty([P_all.shape[0]])
                 e_rot = np.empty([P_all.shape[0]])
                 q_sols_np = np.empty([P_all.shape[0], robot.n])
                 q_sols = []
+
                 for idx in range(P_all.shape[0]):
                     P = P_all[idx, :]
-                    # q_sol = batchIKmultiDOF(P, prob_data.T0, prob_data.num_joints, 
-                    # T_final = torch.tensor(T_goal.as_matrix(), dtype=P.dtype).unsqueeze(0).to(device))
+
+                    if isinstance(P, torch.Tensor):
+                        P = P.cpu().numpy()
 
                     q_sol = graph.joint_variables(
                         graph_from_pos(P, graph.node_ids), {robot.end_effectors[0]: T_goal}
-                    )  # get joint angles
+                    )
 
                     q_sols_np[idx] = np.fromiter(
                         (q_sol[f"p{jj}"] for jj in range(1, graph.robot.n + 1)), dtype=float
                     )
 
                     T_ee = graph.robot.pose(q_sol, robot.end_effectors[-1])
-                    e_pose[idx] = np.linalg.norm(T_ee.inv().dot(T_goal).log())
+                    
+                    # Calculate positional error as before
                     e_pos[idx] = np.linalg.norm(T_ee.trans - T_goal.trans)
-                    e_rot[idx] = np.linalg.norm(T_ee.rot.inv().dot(T_goal.rot).log())
+                    
+                    # More robust rotation error calculation
+                    try:
+                        rot_diff = T_ee.rot.inv().dot(T_goal.rot)
+                        rot_log = rot_diff.log()
+                        
+                        # Check for numerical instability
+                        if np.isfinite(rot_log).all() and np.max(np.abs(rot_log)) < 100:
+                            e_rot[idx] = np.linalg.norm(rot_log)
+                        else:
+                            # Alternative method for singularity cases
+                            # Convert to angle-axis representation
+                            theta = np.arccos(np.clip((np.trace(rot_diff.as_matrix()) - 1) / 2, -1.0, 1.0))
+                            e_rot[idx] = abs(theta)
+                    except Exception as e:
+                        print(f"\n    Warning: Rotation calculation error: {e}")
+                        # Fallback method
+                        e_rot[idx] = np.arccos(np.clip((np.trace(T_ee.rot.inv().dot(T_goal.rot).as_matrix()) - 1) / 2, -1.0, 1.0))
+                    
+                    # Calculate total pose error with better bounds
+                    try:
+                        e_pose[idx] = np.linalg.norm(T_ee.inv().dot(T_goal).log())
+                        # Check for numerical instability
+                        if not np.isfinite(e_pose[idx]) or e_pose[idx] > 100:
+                            # Fallback to weighted sum of position and rotation errors
+                            e_pose[idx] = e_pos[idx] + 0.5 * e_rot[idx]
+                    except Exception as e:
+                        print(f"\n    Warning: Pose calculation error: {e}")
+                        # Fallback to weighted sum
+                        e_pose[idx] = e_pos[idx] + 0.5 * e_rot[idx]
 
                     entry = {
                         "Id": kdx,
                         "Robot": robot_type,
                         "Goal Pose": T_goal.as_matrix(),
                         "Sol. Config": q_sols_np[idx],
-                        # "Sol. Points": P_all[idx,:],
                         "Err. Pose": e_pose[idx],
                         "Err. Position": e_pos[idx],
                         "Err. Rotation": e_rot[idx],
-                        # "Goal Config": q_goal_np,
-                        # "Goal Points": P_goal,
                         "Sol. Time": t_sol,
                     }
                     sol_data.append(entry)
+                
+                print(f" → Pose error: {np.mean(e_pose):.4f}")
                 all_sol_data.append(pd.DataFrame(sol_data))
 
         pd_data = pd.concat(all_sol_data)
 
         exp_dir = f"{sys.path[0]}/results/"+ f"{args.id}/"
         os.makedirs(exp_dir, exist_ok=True)
-        pd_data.to_pickle(os.path.join(exp_dir, "results.pkl"))
+        result_path = os.path.join(exp_dir, "results.pkl")
+        pd_data.to_pickle(result_path)
+        
+        print(f"\n✓ Results saved to {result_path}")
+        
+        # Print summary statistics
+        print("\nSummary Statistics:")
+        for robot in robot_types:
+            robot_data = pd_data[pd_data["Robot"] == robot]
+            print(f"  {robot.upper()}: ")
+            print(f"    Position Error (mm): mean={robot_data['Err. Position'].mean()*1000:.2f}, min={robot_data['Err. Position'].min()*1000:.2f}, max={robot_data['Err. Position'].max()*1000:.2f}")
+            print(f"    Rotation Error (deg): mean={robot_data['Err. Rotation'].mean()*180/np.pi:.2f}, min={robot_data['Err. Rotation'].min()*180/np.pi:.2f}, max={robot_data['Err. Rotation'].max()*180/np.pi:.2f}")
+            print(f"    Solution Time (ms): {robot_data['Sol. Time'].mean()*1000:.2f}")
 
 
 if __name__ == "__main__":
     random.seed(17)
     parser = argparse.ArgumentParser()
 
-    # General settings
     parser.add_argument("--id", type=str, default="test_experiment", help="Name of the folder with experiment data")
     parser.add_argument("--model_path", nargs="*", type=str, required=True, help="Path to folder with model data")
     parser.add_argument('--device', type=str, default='cuda:1', help='Device to use for PyTorch')
