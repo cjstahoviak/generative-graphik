@@ -303,8 +303,7 @@ def generate_random_struct_data(dof):
 
 
 def generate_randomized_robot_data(robot_type, dofs, num_examples, params):
-    # generate data for randomized robots
-
+    # Generate data for randomized robots
     examples_per_dof = num_examples // len(dofs)
     print("Generating " + robot_type + " data!")
 
@@ -330,25 +329,27 @@ def generate_randomized_robot_data(robot_type, dofs, num_examples, params):
             for field in struct_data.__dataclass_fields__:
                 all_struct_data.__dict__[field].append(getattr(struct_data, field))
 
+    # === Concatenate and format all collected data ===
     types = torch.cat(all_struct_data.type, dim=0)
     T0 = torch.cat(all_struct_data.T0, dim=0).reshape(-1, 4, 4)
     num_joints = torch.tensor(all_struct_data.num_joints)
     num_nodes = torch.tensor(all_struct_data.num_nodes)
     num_edges = torch.tensor(all_struct_data.num_edges)
-
-    # problem is that edge_index_full doesn't contain self-loops
     masks = torch.cat(all_struct_data.partial_mask, dim=-1)
     edge_index_full = torch.cat(all_struct_data.edge_index_full, dim=-1)
     partial_goal_mask = torch.cat(all_struct_data.partial_goal_mask, dim=-1)
 
-    # delete struct data
+    # Clean up
     all_struct_data = None
 
+    # === Forward kinematics ===
     q = torch.rand(num_joints.sum(), dtype=T0.dtype) * 2 * torch.pi - torch.pi
-    q[(num_joints).cumsum(dim=-1) - 1] = 0
+    q[num_joints.cumsum(dim=-1) - 1] = 0
     T = batchFKmultiDOF(T0, q, num_joints)
     P = batchPmultiDOF(T, num_joints)
     T_ee = T[num_joints.cumsum(dim=-1)]
+
+    # === Edge construction ===
     offset_full = (
         torch.cat([torch.tensor([0]), num_nodes[:-1].cumsum(dim=-1)])
         .repeat_interleave(num_edges, dim=-1)
@@ -356,18 +357,16 @@ def generate_randomized_robot_data(robot_type, dofs, num_examples, params):
         .expand(2, -1)
     )
     edge_index_full_offset = edge_index_full + offset_full
+    d_ij = P[edge_index_full_offset[1]] - P[edge_index_full_offset[0]]
+    dist = torch.norm(d_ij, dim=1, keepdim=True)
+    edge_attr = torch.cat([dist, d_ij], dim=1)  # [E, 4]
 
-    distances = torch.linalg.norm(
-        P[edge_index_full_offset[0], :] - P[edge_index_full_offset[1], :], dim=-1
-    )
-    direction_vectors = P[edge_index_full_offset[1]] - P[edge_index_full_offset[0]]
-    edge_attr = torch.cat([distances.unsqueeze(1), direction_vectors], dim=1)
-
-    node_slice = torch.cat([torch.tensor([0]), (num_nodes).cumsum(dim=-1)])
-    joint_slice = torch.cat([torch.tensor([0]), (num_joints).cumsum(dim=-1)])
+    # === Slice indexing for PyG ===
+    node_slice = torch.cat([torch.tensor([0]), num_nodes.cumsum(dim=-1)])
+    joint_slice = torch.cat([torch.tensor([0]), num_joints.cumsum(dim=-1)])
     frame_slice = torch.cat([torch.tensor([0]), (num_joints + 1).cumsum(dim=-1)])
     robot_slice = torch.arange(num_joints.size(0) + 1)
-    edge_full_slice = torch.cat([torch.tensor([0]), (num_edges).cumsum(dim=-1)])
+    edge_full_slice = torch.cat([torch.tensor([0]), num_edges.cumsum(dim=-1)])
 
     slices = {
         "edge_attr": edge_full_slice,
@@ -385,7 +384,7 @@ def generate_randomized_robot_data(robot_type, dofs, num_examples, params):
     data = Data(
         type=types,
         pos=P,
-        edge_attr=edge_attr,
+        edge_attr=edge_attr,  # <-- includes [dist, dx, dy, dz]
         T_ee=T_ee,
         num_joints=num_joints.type(torch.int32),
         partial_mask=masks,
@@ -396,7 +395,6 @@ def generate_randomized_robot_data(robot_type, dofs, num_examples, params):
     )
 
     return data, slices
-
 
 def generate_dataset(params, robots):
     dof = params.get("dof", [3])  # if no dofs are defined, default to 3

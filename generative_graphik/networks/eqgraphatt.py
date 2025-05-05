@@ -9,7 +9,6 @@ class EqGraphAtt(nn.Module):
         out_channels_node=3,
         coordinates_dim=3,
         node_features_dim=5,
-        edge_features_dim=4,  # <-- updated from 1 to 4
         mlp_hidden_size=64,
         num_graph_mlp_layers=0,
         num_egnn_mlp_layers=2,
@@ -43,9 +42,8 @@ class EqGraphAtt(nn.Module):
         for _ in range(num_gnn_layers):
             self.gnn.append(
                 EGNNAttLayer(
-                    channels_h=latent_dim,
+                    channels_h=latent_dim,                # 👈 explicitly pass it
                     channels_m=latent_dim,
-                    channels_a=edge_features_dim,
                     hidden_channels=mlp_hidden_size,
                     non_linearity=non_linearity,
                     norm_layer=norm_layer,
@@ -81,6 +79,7 @@ class EqGraphAtt(nn.Module):
         n = x.shape[0]
         x_l = self.mlp_x(x)
         h_l = self.mlp_h(h)
+        #print(f"[EqGraphAtt] x_l shape: {x_l.shape}, h_l shape: {h_l.shape}")
 
         for layer in self.gnn:
             x_l, h_l = layer(x=x_l, h=h_l, edge_attr=edge_attr, edge_index=edge_index, c=c)

@@ -61,7 +61,7 @@ python -u ${SRC_PATH}/generative_graphik/train.py \
     --num_node_features_out 3 \
     --num_coordinates_in 3 \
     --num_features_in 3 \
-    --num_edge_features_in 1 \
+    --num_edge_features_in 4 \
     --num_prior_mixture_components 16 \
     --num_likelihood_mixture_components 1\
     --num_anchor_nodes 4 \
