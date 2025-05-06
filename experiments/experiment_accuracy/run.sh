@@ -16,8 +16,8 @@ fi
 
 python experiment_accuracy.py \
     --id "${NAME}_experiment" \
-    --robots panda \
+    --robots ur10 kuka lwa4d panda lwa4p \
     --n_evals 500 \
     --model_path "${MODEL_PATH}/" \
-    --device cuda:1 \
+    --device cuda:0 \
     --num_samples 32

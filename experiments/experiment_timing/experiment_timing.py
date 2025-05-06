@@ -27,8 +27,10 @@ def model_arg_loader(path):
 # NOTE generates all the initializations and stores them to a pickle file
 def main(args):
     device = args.device
+    print(f"Starting timing experiment using device: {device}")
 
-    for model_path in args.model_path:# number of evaluations per robots
+    for model_path in args.model_path:
+        print(f"Loading model from {model_path}")
         spec = importlib.util.spec_from_file_location("model", model_path + "model.py")
         model = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(model)
@@ -42,23 +44,32 @@ def main(args):
                     torch.load(model_path + f"/net.pth", map_location=device)
                 )
                 model.eval()
+                print("Model loaded successfully")
             except Exception as e:
-                print(e)
-        model = torch_geometric.compile(
-            model, 
-            mode="max-autotune", 
-            fullgraph=True
-        )
+                print(f"Error loading model: {e}")
+        
+        # Remove the torch_geometric.compile call that's causing the error
+        # If you need to use torch.compile instead (for PyTorch 2.0+), uncomment below:
+        # if hasattr(torch, 'compile'):
+        #     print("Using torch.compile")
+        #     model = torch.compile(model, mode="max-autotune", fullgraph=True)
 
-        sample_amounts = [1, 16, 64, 128, 256, 512, 1024]
+        sample_amounts = [1, 16, 64, 128, 256]
         joint_amounts = ["6", "12", "18", "24", "30", "36"]
         results = []
 
+        print("\nStarting timing experiments:")
+        print(f"Sample amounts: {sample_amounts}")
+        print(f"Joint amounts: {joint_amounts}")
+
         for sample_amount in sample_amounts:
             for joint_amount in joint_amounts:
+                print(f"\nTesting with {sample_amount} samples for {joint_amount}-DOF robot")
+                
                 starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
                 
-                #XXX: Warm up forward pass
+                #Warm up forward pass
+                print("  Warming up...", end="", flush=True)
                 for _ in range(2):
                     num_joints = int(joint_amount)
                     graph = random_revolute_robot_graph(num_joints)
@@ -81,9 +92,11 @@ def main(args):
                         num_samples=sample_amount,
                         batch_size=1
                     )
-                # torch.cuda.synchronize() # wait for warm-up to finish
+                print(" done")
 
-                for _ in range(16):
+                print(f"  Running {16} timing trials...", end="", flush=True)
+                trial_times = []
+                for trial in range(16):
                     num_joints = int(joint_amount)
                     graph = random_revolute_robot_graph(num_joints)
                 
@@ -94,8 +107,6 @@ def main(args):
                     data = model.preprocess(prob_data)
 
                     # Compute solutions
-                    # torch.cuda.synchronize()
-                    # t0 = time.time()
                     starter.record()
                     _ = model.forward_eval(
                         x=data.pos,
@@ -110,14 +121,20 @@ def main(args):
                     )
                     ender.record()
                     torch.cuda.synchronize()
-                    # t_sol = time.time() - t0
                     t_sol = starter.elapsed_time(ender)
+                    trial_times.append(t_sol)
                     results.append((sample_amount, t_sol, joint_amount))
+                
+                avg_time = sum(trial_times) / len(trial_times)
+                print(f" completed (avg: {avg_time:.2f} ms)")
 
+            print(f"\nSaving results to {args.id}/results.pkl")
             exp_dir = f"{sys.path[0]}/results/"+ f"{args.id}/"
             os.makedirs(exp_dir, exist_ok=True)
             with open(os.path.join(exp_dir, 'results.pkl'), 'wb') as handle:
                 pkl.dump(results, handle, protocol=pkl.HIGHEST_PROTOCOL)
+            
+        print("\nTiming experiment completed successfully!")
 
 if __name__ == "__main__":
     random.seed(15)
