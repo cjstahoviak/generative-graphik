@@ -34,7 +34,7 @@ then
         --goal_type pose \
         --goal_type pose \
         --randomize False \
-        --non_coplanar True
+        --non_coplanar False
 else
     echo "Dataset ${DATASET_NAME} found!"
 fi
@@ -66,7 +66,7 @@ python -u ${SRC_PATH}/generative_graphik/train.py \
     --num_likelihood_mixture_components 1\
     --num_anchor_nodes 4 \
     --train_prior True \
-    --n_epoch 5 \
+    --n_epoch 50 \
     --n_scheduler_epoch 60\
     --dim_goal 6 \
     --storage_base_path "${SRC_PATH}/saved_models" \
