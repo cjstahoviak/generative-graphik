@@ -29,8 +29,8 @@ then
     python -u ${SRC_PATH}/generative_graphik/utils/dataset_generation.py \
         --id "${DATASET_NAME}" \
         --robots revolute_chain \
-        --num_examples 512 \
-        --max_examples_per_file 512 \
+        --num_examples 5120 \
+        --max_examples_per_file 5120 \
         --goal_type pose \
         --goal_type pose \
         --randomize False \
@@ -44,8 +44,8 @@ then
 python -u ${SRC_PATH}/generative_graphik/train.py \
     --id "${NAME}_model" \
     --norm_layer LayerNorm \
-    --debug True \
-    --device cpu \
+    --debug False \
+    --device cuda:0 \
     --n_worker 0 \
     --n_beta_scaling_epoch 1 \
     --lr 3e-4 \
@@ -74,7 +74,7 @@ python -u ${SRC_PATH}/generative_graphik/train.py \
     --validation_data_path "${SRC_PATH}/datasets/${VALIDATION_DATASET_NAME}" \
     --module_path "${SRC_PATH}/generative_graphik/model.py" \
     --use_validation True \
-    --n_checkpoint_epoch 16 \
+    --n_checkpoint_epoch 1 \
     --non_linearity silu \
     --rec_gain 10 
 fi

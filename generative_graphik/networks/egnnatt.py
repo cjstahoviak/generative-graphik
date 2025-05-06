@@ -54,14 +54,19 @@ class EGNNAttLayer(MessagePassing):
         self.attn_mlp = None
         self._mlps_built = False
 
-    def _build_mlps(self, h_dim, edge_attr_dim, input_dim_phi_h):
+    def _build_mlps(self, h_dim, edge_attr_dim, input_dim_phi_h, device=None):
+
+         # Get device from inputs if not provided
+        if device is None and hasattr(self, '_x'):
+            device = self._x.device
+
         channels_a = edge_attr_dim
         #print(f"[DEBUG] channels_h = {self.channels_h}, channels_m = {self.channels_m}, input_dim_phi_h = {input_dim_phi_h}")
         self.attn_mlp = nn.Sequential(
             nn.Linear(2 * self.channels_h + channels_a, self.hidden_channels),
             self.non_linearity,
             nn.Linear(self.hidden_channels, 1)
-        )
+        ).to(device)
 
         phi_e_layers = [
             nn.Linear(2 * self.channels_h + 1 + channels_a, self.hidden_channels),
@@ -79,7 +84,7 @@ class EGNNAttLayer(MessagePassing):
             get_norm_layer(self.channels_m, layer_type=self.norm_layer),
             self.non_linearity
         ]
-        self.phi_e = nn.Sequential(*phi_e_layers)
+        self.phi_e = nn.Sequential(*phi_e_layers).to(device)
 
         phi_x_layers = [
             nn.Linear(self.channels_m + 3, self.hidden_channels),
@@ -93,7 +98,7 @@ class EGNNAttLayer(MessagePassing):
                 self.non_linearity
             ]
         phi_x_layers.append(nn.Linear(self.hidden_channels, self.channels_h)) 
-        self.phi_x = nn.Sequential(*phi_x_layers)
+        self.phi_x = nn.Sequential(*phi_x_layers).to(device)
 
         phi_h_layers = [
             DebugLinear(input_dim_phi_h, self.hidden_channels),
@@ -107,7 +112,7 @@ class EGNNAttLayer(MessagePassing):
                 self.non_linearity
             ]
         phi_h_layers.append(DebugLinear(self.hidden_channels, self.channels_h))
-        self.phi_h = ResWrapper(nn.Sequential(*phi_h_layers), dim_res=self.channels_h)
+        self.phi_h = ResWrapper(nn.Sequential(*phi_h_layers), dim_res=self.channels_h).to(device)
 
         self._mlps_built = True
 
@@ -119,7 +124,7 @@ class EGNNAttLayer(MessagePassing):
             dist_dim = 1  # dist_sq is always 1D
             phi_e_input_dim = 2 * h_dim + dist_dim + edge_attr_dim
             m_dim = self.channels_m
-            self._build_mlps(h_dim, edge_attr.shape[-1], input_dim_phi_h=h_dim + m_dim)
+            self._build_mlps(h_dim, edge_attr.shape[-1], input_dim_phi_h=h_dim + m_dim, device=x.device)
         # Store extra tensors for update()
         self._x = x
         self._h = h
@@ -135,7 +140,7 @@ class EGNNAttLayer(MessagePassing):
 
         attn_input = torch.cat([h_i, h_j, edge_attr], dim=-1)
         scores = self.attn_mlp(attn_input)
-        attn_weights = softmax(scores, index=index)
+        attn_weights = custom_softmax(scores, index=index)
 
         phi_e_input = torch.cat([h_i, h_j, dist_sq, edge_attr], dim=-1)
         #print(f"[DEBUG] phi_e input shape: {phi_e_input.shape}")
@@ -167,3 +172,31 @@ class EGNNAttLayer(MessagePassing):
         mx = scatter(mx_ij, index, dim=0, dim_size=dim_size, reduce=self.aggr)
         mh = scatter(mh_ij, index, dim=0, dim_size=dim_size, reduce=self.aggr)
         return mx, mh
+
+def custom_softmax(src, index, dim=0):
+    """
+    Custom implementation of scatter softmax to replace torch_geometric.utils.softmax
+    
+    Args:
+        src: Source tensor of shape [E, *] where E is the number of edges
+        index: Index tensor of shape [E] that maps each edge to its target node
+        dim: Dimension along which to perform softmax, default is 0
+        
+    Returns:
+        Softmax normalized tensor of shape [E, *]
+    """
+    from torch_scatter import scatter_max, scatter_add
+    
+    # Get max value per target node for numerical stability
+    max_value = scatter_max(src, index, dim=dim)[0]
+    max_value = max_value[index]  # Broadcast max values back to edges
+    
+    # Subtract max and compute exponentials
+    exp_scores = torch.exp(src - max_value)
+    
+    # Sum exponentials per target node
+    sum_exp = scatter_add(exp_scores, index, dim=dim)
+    sum_exp = sum_exp[index]  # Broadcast sums back to edges
+    
+    # Compute softmax
+    return exp_scores / (sum_exp + 1e-12)  # Add small epsilon for numerical stability
