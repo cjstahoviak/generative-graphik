@@ -1,4 +1,69 @@
-#!/usr/bin/env python3
+def generate_latex_table(data):
+    """Generate a LaTeX table of statistics for each model averaged across all robots"""
+    # Group by Model and calculate statistics
+    models = data['Model'].unique()
+    
+    # Create a DataFrame to store the results
+    results = pd.DataFrame(index=models, columns=[
+        'Pos_mean', 'Pos_min', 'Pos_max', 'Pos_Q1', 'Pos_Q3',
+        'Rot_mean', 'Rot_min', 'Rot_max', 'Rot_Q1', 'Rot_Q3'
+    ])
+    
+    # Calculate statistics for each model
+    for model in models:
+        model_data = data[data['Model'] == model]
+        
+        # Position error statistics
+        results.loc[model, 'Pos_mean'] = model_data['Err. Position (mm)'].mean()
+        results.loc[model, 'Pos_min'] = model_data['Err. Position (mm)'].min()
+        results.loc[model, 'Pos_max'] = model_data['Err. Position (mm)'].max()
+        results.loc[model, 'Pos_Q1'] = model_data['Err. Position (mm)'].quantile(0.25)
+        results.loc[model, 'Pos_Q3'] = model_data['Err. Position (mm)'].quantile(0.75)
+        
+        # Rotation error statistics
+        results.loc[model, 'Rot_mean'] = model_data['Err. Rotation (deg)'].mean()
+        results.loc[model, 'Rot_min'] = model_data['Err. Rotation (deg)'].min()
+        results.loc[model, 'Rot_max'] = model_data['Err. Rotation (deg)'].max()
+        results.loc[model, 'Rot_Q1'] = model_data['Err. Rotation (deg)'].quantile(0.25)
+        results.loc[model, 'Rot_Q3'] = model_data['Err. Rotation (deg)'].quantile(0.75)
+    
+    # Sort results by model name alphabetically
+    results = results.sort_index()
+    
+    # Generate LaTeX table
+    latex_table = "\\begin{tabular}{lrrrrrrrrrr}\n"
+    latex_table += "\\toprule\n"
+    latex_table += " & \\multicolumn{5}{c}{Err. Pos. [mm]} & \\multicolumn{5}{c}{Err. Rot. [deg]} \\\\\n"
+    latex_table += " & mean & min & max & Q$_{1}$ & Q$_{3}$ & mean & min & max & Q$_{1}$ & Q$_{3}$ \\\\\n"
+    latex_table += "Model &  &  &  &  &  &  &  &  &  & \\\\\n"
+    latex_table += "\\midrule\n"
+    
+    # Add each model's data as a row
+    for model in results.index:
+        row = f"{model} & "
+        row += f"{results.loc[model, 'Pos_mean']:.1f} & "
+        row += f"{results.loc[model, 'Pos_min']:.1f} & "
+        row += f"{results.loc[model, 'Pos_max']:.1f} & "
+        row += f"{results.loc[model, 'Pos_Q1']:.1f} & "
+        row += f"{results.loc[model, 'Pos_Q3']:.1f} & "
+        row += f"{results.loc[model, 'Rot_mean']:.1f} & "
+        row += f"{results.loc[model, 'Rot_min']:.1f} & "
+        row += f"{results.loc[model, 'Rot_max']:.1f} & "
+        row += f"{results.loc[model, 'Rot_Q1']:.1f} & "
+        row += f"{results.loc[model, 'Rot_Q3']:.1f} \\\\\n"
+        latex_table += row
+    
+    latex_table += "\\bottomrule\n"
+    latex_table += "\\end{tabular}"
+    
+    # Save the LaTeX table to a file
+    os.makedirs('results/tables', exist_ok=True)
+    with open('results/tables/model_statistics.tex', 'w') as f:
+        f.write(latex_table)
+    
+    print("LaTeX table saved to 'results/tables/model_statistics.tex'")
+    
+    return latex_table#!/usr/bin/env python3
 import os
 import glob
 import pandas as pd
@@ -84,6 +149,11 @@ def main():
     
     # Create the two consolidated plots
     create_consolidated_plots(combined_data, robot_types)
+    
+    # Generate LaTeX table
+    latex_table = generate_latex_table(combined_data)
+    print("\nLaTeX Table Preview:")
+    print(latex_table)
 
 def create_consolidated_plots(data, robot_types):
     """Create two consolidated plots: one for position error and one for rotation error"""
