@@ -31,6 +31,34 @@ rcParams['legend.fontsize'] = 12
 rcParams['figure.titlesize'] = 20
 rcParams['figure.titleweight'] = 'bold'
 
+# Dictionary to map metric names to their storage units
+STORAGE_UNITS = {
+    "Err. Position": "m",     # Stored in meters
+    "Err. Rotation": "rad",   # Stored in radians
+    "Err. Pose": "m",         # Stored in meters
+    "Sol. Time": "s",         # Stored in seconds
+}
+
+# Dictionary to map metric names to their display units
+DISPLAY_UNITS = {
+    "Err. Position": "mm",    # Display in millimeters
+    "Err. Rotation": "deg",   # Display in degrees
+    "Err. Pose": "mm",        # Display in millimeters
+    "Sol. Time": "ms",        # Display in milliseconds
+}
+
+def convert_to_display_units(values, metric_name):
+    """Convert metric values from storage to display units"""
+    if metric_name in STORAGE_UNITS:
+        if STORAGE_UNITS[metric_name] == "m" and DISPLAY_UNITS[metric_name] == "mm":
+            return values * 1000  # Convert m to mm
+        elif STORAGE_UNITS[metric_name] == "rad" and DISPLAY_UNITS[metric_name] == "deg":
+            return values * 180 / np.pi  # Convert rad to degrees
+        elif STORAGE_UNITS[metric_name] == "s" and DISPLAY_UNITS[metric_name] == "ms":
+            return values * 1000  # Convert s to ms
+    
+    return values  # No conversion if no mapping exists
+
 def set_figure_style(fig):
     """Apply custom styling to the figure"""
     fig.patch.set_facecolor('white')
@@ -49,6 +77,22 @@ def set_figure_style(fig):
         ax.tick_params(direction='out', width=1.5, length=6)
     return fig
 
+def get_metric_label(metric_name):
+    """Get formatted label with display units for metrics"""
+    if metric_name in DISPLAY_UNITS:
+        return f"{metric_name} ({DISPLAY_UNITS[metric_name]})"
+    
+    # Try to infer units from the metric name
+    if "time" in metric_name.lower():
+        return f"{metric_name} (ms)"
+    elif "angle" in metric_name.lower() or "rotation" in metric_name.lower():
+        return f"{metric_name} (deg)"
+    elif "position" in metric_name.lower() or "distance" in metric_name.lower() or "pose" in metric_name.lower():
+        return f"{metric_name} (mm)"
+    
+    # Default case if no units can be inferred
+    return metric_name
+
 def main(args):
     # Create output directory if it doesn't exist
     results_dir = f"{sys.path[0]}/results/{args.id}/"
@@ -58,9 +102,13 @@ def main(args):
     data = pd.read_pickle(f"{results_dir}/results.pkl")
     stats = data.reset_index()
     
-    # Process error metrics
-    stats["Err. Position"] = stats["Err. Position"]*1000  # Convert to mm
-    stats["Err. Rotation"] = stats["Err. Rotation"]*(180/np.pi)  # Convert to degrees
+    # Process error metrics - convert to display units
+    stats["Err. Position"] = convert_to_display_units(stats["Err. Position"], "Err. Position")
+    stats["Err. Rotation"] = convert_to_display_units(stats["Err. Rotation"], "Err. Rotation")
+    if "Err. Pose" in stats.columns:
+        stats["Err. Pose"] = convert_to_display_units(stats["Err. Pose"], "Err. Pose")
+    if "Sol. Time" in stats.columns:
+        stats["Sol. Time"] = convert_to_display_units(stats["Sol. Time"], "Sol. Time")
     
     # Filter outliers
     q_pos = stats["Err. Position"].quantile(0.99)
@@ -109,38 +157,38 @@ def main(args):
     # Save the first figure
     fig.savefig(f"{results_dir}/error_analysis.png", dpi=300, bbox_inches='tight')
     
-    # Check if additional data columns exist
-    additional_cols = [col for col in stats.columns if col not in 
-                      ["Robot", "Id", "Err. Position", "Err. Rotation", "index", 
-                       "Goal Pose", "Sol. Config", "Sol. Time"]]
-    
-    # Create per-robot plots for additional metrics if they exist
-    if additional_cols:
+    # Create Err. Pose visualization if it exists in the data
+    if "Err. Pose" in stats.columns:
         # Get unique robot types
         robot_types = stats["Robot"].unique()
         
-        # Create a figure for each robot type
-        fig2, axs2 = plt.subplots(len(robot_types), len(additional_cols[:3]), 
-                                 figsize=(15, 4*len(robot_types)), 
+        # Create a figure with one column but taller rows to make the plots wider
+        fig2, axs2 = plt.subplots(len(robot_types), 1, 
+                                 figsize=(10, 4*len(robot_types)), 
                                  squeeze=False)
         
-        fig2.suptitle(f"Distribution of Additional Metrics by Robot Type", 
+        fig2.suptitle(f"Distribution of Pose Error by Robot Type", 
                       fontsize=22, fontweight='bold')
         
-        # Plot each additional metric for each robot
+        # Color mapping for robot types
+        colors = plt.cm.tab10.colors
+        
+        # Plot Err. Pose for each robot
         for i, robot in enumerate(robot_types):
             robot_data = stats[stats["Robot"] == robot]
+            ax = axs2[i, 0]
             
-            for j, col in enumerate(additional_cols[:3]):  # Limit to first 3 additional columns
-                ax = axs2[i, j]
-                
-                # Create a KDE plot for this metric and robot
-                sns.histplot(robot_data[col], kde=True, ax=ax, 
-                            color=plt.cm.tab10(i), linewidth=2)
-                
-                ax.set_title(f"{robot}: {col}")
-                ax.set_xlabel(col)
-                ax.set_ylabel("Frequency")
+            # Get the proper metric label with units
+            metric_label = get_metric_label("Err. Pose")
+            
+            # Create a KDE plot for this metric and robot
+            sns.histplot(robot_data["Err. Pose"], kde=True, ax=ax, 
+                        color=colors[i % len(colors)], linewidth=2)
+            
+            # Set appropriate title and labels
+            ax.set_title(f"{robot.upper()}: {metric_label}")
+            ax.set_xlabel(metric_label)
+            ax.set_ylabel("Frequency")
         
         # Apply enhanced styling
         fig2 = set_figure_style(fig2)
@@ -173,7 +221,7 @@ def main(args):
         f.write("\n```\n\n")
         f.write("## Figures\n\n")
         f.write("![Error Analysis](error_analysis.png)\n\n")
-        if additional_cols:
+        if "Err. Pose" in stats.columns:
             f.write("![Additional Metrics](additional_metrics.png)\n\n")
         if latex:
             f.write("## LaTeX Table\n\n")
